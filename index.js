@@ -2,29 +2,52 @@ const express = require('express');
 const { Pool } = require('pg');
 const app = express();
 
+// Para aceitar requisições em formato JSON enviadas pelo aplicativo Android
+app.use(express.json());
+
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: { rejectUnauthorized: false }
 });
 
-const TOKEN = 'chuck2026';
+// Rota de criação de licenças (Agora acessível pelo Android sem exigir token na URL)
+app.post('/api/licenses/create', async (req, res) => {
+    const { key, duration } = req.body;
+    
+    if (!key) return res.status(400).send("Chave em falta");
 
-app.use((req, res, next) => {
-    if (req.query.token !== TOKEN) {
-        return res.status(403).send("Acesso negado");
+    let expiresAt = new Date();
+    const dias = parseInt(duration) || 7; // Padrão de 7 dias caso venha vazio
+
+    if (dias >= 3600) {
+        // Permanente (ano 2099)
+        expiresAt.setFullYear(2099);
+    } else {
+        expiresAt.setDate(expiresAt.getDate() + dias);
     }
-    next();
+
+    try {
+        await pool.query(
+            "INSERT INTO licenses (ckey, status, expires_at) VALUES ($1, 'livre', $2) ON CONFLICT (ckey) DO NOTHING",
+            [key, expiresAt]
+        );
+        res.status(201).send("SUCESSO");
+    } catch (err) {
+        res.status(500).send("Erro BD: " + err.message);
+    }
 });
 
+// Mantém também a rota antiga por compatibilidade caso alguma outra parte use via GET
 app.get('/api/save', async (req, res) => {
     const { key, duration } = req.query;
     if (!key) return res.status(400).send("Chave em falta");
 
     let expiresAt = new Date();
-    if (duration === '1_dia') expiresAt.setDate(expiresAt.getDate() + 1);
-    else if (duration === '7_dias') expiresAt.setDate(expiresAt.getDate() + 7);
-    else if (duration === '1_mes') expiresAt.setMonth(expiresAt.getMonth() + 1);
-    else if (duration === 'permanente') expiresAt.setFullYear(2099);
+    if (duration === '1_dia' || duration === '1') expiresAt.setDate(expiresAt.getDate() + 1);
+    else if (duration === '7_dias' || duration === '7') expiresAt.setDate(expiresAt.getDate() + 7);
+    else if (duration === '1_mes' || duration === '30') expiresAt.setMonth(expiresAt.getMonth() + 1);
+    else if (duration === 'permanente' || duration === '3650') expiresAt.setFullYear(2099);
+    else expiresAt.setDate(expiresAt.getDate() + 7);
 
     try {
         await pool.query(
