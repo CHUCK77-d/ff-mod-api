@@ -1,18 +1,17 @@
+
 const express = require('express');
 const { Pool } = require('pg');
 
 const app = express();
 app.use(express.json());
 
-// Conexão direta com a Base de Dados Interna do Render
+// Configuração da base de dados PostgreSQL interna do Render
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
+  ssl: { rejectUnauthorized: false }
 });
 
-// Criar tabela de licenças automaticamente se não existir
+// Inicializar a tabela de licenças automaticamente ao iniciar o servidor
 async function initDb() {
   try {
     await pool.query(`
@@ -24,21 +23,22 @@ async function initDb() {
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
-    console.log("Tabela 'licenses' verificada/criada com sucesso.");
+    console.log("Base de dados inicializada com sucesso!");
   } catch (err) {
-    console.error("Erro ao criar tabela:", err.message);
+    console.error("Erro ao inicializar a base de dados:", err.message);
   }
 }
 initDb();
 
-// 1. Rota para gerar e salvar chaves (Painel ADM)
+// 1. Rota para gerar e guardar chave (Painel ADM)
 app.get('/api/save', async (req, res) => {
   const { key, duration } = req.query;
-
+  
   if (!key) {
-    return res.status(400).send('Erro: Parâmetro "key" em falta.');
+    return res.status(400).send('Erro: Chave em falta.');
   }
 
+  const cleanKey = key.trim();
   const dias = duration ? parseInt(duration) : 7;
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + dias);
@@ -49,25 +49,25 @@ app.get('/api/save', async (req, res) => {
       VALUES ($1, $2, $3, NOW())
       ON CONFLICT (key_name) DO NOTHING;
     `;
-    
-    await pool.query(query, [key, dias, expiresAt]);
+    await pool.query(query, [cleanKey, dias, expiresAt]);
     res.status(200).send('SUCESSO: Chave criada e salva!');
   } catch (err) {
-    console.error('Erro ao salvar no banco:', err.message);
+    console.error("Erro no /api/save:", err.message);
     res.status(500).send('Erro 500: ' + err.message);
   }
 });
 
-// 2. Rota para verificar chaves (Painel do Cliente)
+// 2. Rota para verificar chave (Painel Cliente)
 app.get('/api/verify', async (req, res) => {
   const { key } = req.query;
-
+  
   if (!key) {
     return res.status(400).send('Erro: Chave em falta.');
   }
 
   try {
-    const result = await pool.query('SELECT * FROM licenses WHERE key_name = $1', [key]);
+    const cleanKey = key.trim();
+    const result = await pool.query('SELECT * FROM licenses WHERE key_name = $1', [cleanKey]);
     
     if (result.rows.length === 0) {
       return res.status(404).send('Chave inválida ou não encontrada.');
@@ -83,12 +83,12 @@ app.get('/api/verify', async (req, res) => {
 
     res.status(200).send('SUCESSO: Acesso liberado!');
   } catch (err) {
-    console.error('Erro ao verificar chave:', err.message);
-    res.status(500).send('Erro 500: ' + err.message);
+    console.error("Erro no /api/verify:", err.message);
+    res.status(500).send('Erro interno do servidor: ' + err.message);
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API a correr na porta ${PORT}`);
+  console.log(`API a funcionar na porta ${PORT}`);
 });
