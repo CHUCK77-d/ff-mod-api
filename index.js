@@ -22,7 +22,7 @@ async function initDb() {
 
       CREATE TABLE IF NOT EXISTS active_devices (
         id SERIAL PRIMARY KEY,
-        key_name TEXT NOT NULL,
+        key_name TEXT UNIQUE NOT NULL,
         device_name TEXT NOT NULL,
         ip_address TEXT NOT NULL,
         last_seen TIMESTAMP DEFAULT NOW()
@@ -35,7 +35,7 @@ async function initDb() {
 }
 initDb();
 
-// 1. Gerar Chave (Painel ADM)
+// 1. Apenas cria e guarda a chave (Painel ADM) - SEM REGISTAR DISPOSITIVO AQUI
 app.get('/api/save', async (req, res) => {
   const { key, duration } = req.query;
   if (!key) return res.status(400).send('Erro: Chave em falta.');
@@ -57,12 +57,11 @@ app.get('/api/save', async (req, res) => {
   }
 });
 
-// 2. Verificar Chave e Registar Dispositivo Conectado (Cliente)
+// 2. Verifica a chave e REGISTA O DISPOSITIVO DO CLIENTE APENAS AQUI
 app.get('/api/verify', async (req, res) => {
   const { key, device } = req.query;
   if (!key) return res.status(400).send('Erro: Chave em falta.');
 
-  // Captura o IP real do cliente (suportando proxies do Render)
   const clientIp = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'IP Desconhecido';
   const deviceName = device ? device.trim() : 'Android Device';
   const cleanKey = key.trim();
@@ -79,17 +78,12 @@ app.get('/api/verify', async (req, res) => {
       return res.status(400).send('Chave expirada.');
     }
 
-    // Registra ou atualiza o dispositivo ativo na tabela
+    // Insere ou atualiza o dispositivo associado a ESTA chave específica
     await pool.query(
       `INSERT INTO active_devices (key_name, device_name, ip_address, last_seen)
        VALUES ($1, $2, $3, NOW())
-       ON CONFLICT DO NOTHING;`,
-      [cleanKey, deviceName, clientIp]
-    );
-
-    // Atualiza o last_seen se já existir
-    await pool.query(
-      `UPDATE active_devices SET last_seen = NOW(), ip_address = $3, device_name = $2 WHERE key_name = $1;`,
+       ON CONFLICT (key_name) 
+       DO UPDATE SET device_name = EXCLUDED.device_name, ip_address = EXCLUDED.ip_address, last_seen = NOW();`,
       [cleanKey, deviceName, clientIp]
     );
 
@@ -99,12 +93,10 @@ app.get('/api/verify', async (req, res) => {
   }
 });
 
-// 3. Rota para Listar Dispositivos Conectados (Para o Painel ADM visualizar)
+// 3. Lista os dispositivos conectados para o Painel ADM
 app.get('/api/devices', async (req, res) => {
   try {
-    // Remove dispositivos inativos há mais de 5 minutos
-    await pool.query(`DELETE FROM active_devices WHERE last_seen < NOW() - INTERVAL '5 minutes';`);
-
+    await pool.query(`DELETE FROM active_devices WHERE last_seen < NOW() - INTERVAL '10 minutes';`);
     const result = await pool.query('SELECT key_name, device_name, ip_address, last_seen FROM active_devices ORDER BY last_seen DESC;');
     res.status(200).json(result.rows);
   } catch (err) {
