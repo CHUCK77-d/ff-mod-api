@@ -35,7 +35,7 @@ async function initDb() {
 }
 initDb();
 
-// 1. Apenas cria a licença (ADM) - NENHUM DISPOSITIVO É REGISTADO AQUI
+// 1. Apenas cria a licença (ADM)
 app.get('/api/save', async (req, res) => {
   const { key, duration } = req.query;
   if (!key) return res.status(400).send('Erro: Chave em falta.');
@@ -57,7 +57,7 @@ app.get('/api/save', async (req, res) => {
   }
 });
 
-// 2. Regista o dispositivo APENAS quando o cliente usa a chave
+// 2. Regista ou atualiza o dispositivo quando o cliente usa a chave
 app.get('/api/verify', async (req, res) => {
   const { key, device } = req.query;
   if (!key) return res.status(400).send('Erro: Chave em falta.');
@@ -78,7 +78,6 @@ app.get('/api/verify', async (req, res) => {
       return res.status(400).send('Chave expirada.');
     }
 
-    // Insere ou atualiza o dispositivo associado a esta chave
     await pool.query(
       `INSERT INTO active_devices (key_name, device_name, ip_address, last_seen)
        VALUES ($1, $2, $3, NOW())
@@ -93,12 +92,15 @@ app.get('/api/verify', async (req, res) => {
   }
 });
 
-// 3. Lista apenas dispositivos ativos (considera inativo se não atualizar há mais de 15 segundos)
+// 3. Lista TODOS os dispositivos que já usaram chaves, calculando se estão online (últimos 15 segundos)
 app.get('/api/devices', async (req, res) => {
   try {
-    // Remove quem não atualizou o sinal há mais de 15 segundos
-    await pool.query(`DELETE FROM active_devices WHERE last_seen < NOW() - INTERVAL '15 seconds';`);
-    const result = await pool.query('SELECT key_name, device_name, ip_address, last_seen FROM active_devices ORDER BY last_seen DESC;');
+    const result = await pool.query(`
+      SELECT key_name, device_name, ip_address, last_seen,
+      (last_seen > NOW() - INTERVAL '15 seconds') AS is_online
+      FROM active_devices 
+      ORDER BY last_seen DESC;
+    `);
     res.status(200).json(result.rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
