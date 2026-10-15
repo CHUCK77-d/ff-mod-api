@@ -11,6 +11,7 @@ const pool = new Pool({
 
 async function initDb() {
   try {
+    // Garante que a tabela active_devices tem uma restrição UNIQUE em key_name
     await pool.query(`
       CREATE TABLE IF NOT EXISTS licenses (
         id SERIAL PRIMARY KEY,
@@ -22,7 +23,7 @@ async function initDb() {
 
       CREATE TABLE IF NOT EXISTS active_devices (
         id SERIAL PRIMARY KEY,
-        key_name TEXT UNIQUE NOT NULL,
+        key_name TEXT NOT NULL UNIQUE,
         device_name TEXT NOT NULL,
         ip_address TEXT NOT NULL,
         last_seen TIMESTAMP DEFAULT NOW()
@@ -35,7 +36,7 @@ async function initDb() {
 }
 initDb();
 
-// 1. Apenas cria e guarda a chave (Painel ADM) - SEM REGISTAR DISPOSITIVO AQUI
+// 1. Apenas cria e guarda a chave (Painel ADM)
 app.get('/api/save', async (req, res) => {
   const { key, duration } = req.query;
   if (!key) return res.status(400).send('Erro: Chave em falta.');
@@ -57,7 +58,7 @@ app.get('/api/save', async (req, res) => {
   }
 });
 
-// 2. Verifica a chave e REGISTA O DISPOSITIVO DO CLIENTE APENAS AQUI
+// 2. Verifica a chave e regista o dispositivo do cliente
 app.get('/api/verify', async (req, res) => {
   const { key, device } = req.query;
   if (!key) return res.status(400).send('Erro: Chave em falta.');
@@ -78,7 +79,7 @@ app.get('/api/verify', async (req, res) => {
       return res.status(400).send('Chave expirada.');
     }
 
-    // Insere ou atualiza o dispositivo associado a ESTA chave específica
+    // Regista ou atualiza o dispositivo associado a esta chave
     await pool.query(
       `INSERT INTO active_devices (key_name, device_name, ip_address, last_seen)
        VALUES ($1, $2, $3, NOW())
