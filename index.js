@@ -1,112 +1,94 @@
 const express = require('express');
-const https = require('https');
+const { Pool } = require('pg');
 
 const app = express();
 app.use(express.json());
 
-// Configurações da API REST do Supabase
-const SUPABASE_HOST = "rpanwkvzsuhixnskidla.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJwYW53a3ZzenVoaXhuc2tpZGxhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTczOTI4MDAwMCwiZXhwIjoyMDU0ODU2MDAwfQ=="; // Service Role Key para ignorar RLS
+// Conexão direta com a Base de Dados Interna do Render
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  }
+});
+
+// Criar tabela de licenças automaticamente se não existir
+async function initDb() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS licenses (
+        id SERIAL PRIMARY KEY,
+        key_name TEXT UNIQUE NOT NULL,
+        duration_days INT NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    console.log("Tabela 'licenses' verificada/criada com sucesso.");
+  } catch (err) {
+    console.error("Erro ao criar tabela:", err.message);
+  }
+}
+initDb();
 
 // 1. Rota para gerar e salvar chaves (Painel ADM)
-app.get('/api/save', (req, res) => {
+app.get('/api/save', async (req, res) => {
   const { key, duration } = req.query;
-  if (!key) return res.status(400).send('Erro: Chave em falta.');
+
+  if (!key) {
+    return res.status(400).send('Erro: Parâmetro "key" em falta.');
+  }
 
   const dias = duration ? parseInt(duration) : 7;
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + dias);
 
-  const postData = JSON.stringify({
-    key_name: key,
-    duration_days: dias,
-    expires_at: expiresAt.toISOString()
-  });
-
-  const options = {
-    hostname: SUPABASE_HOST,
-    path: '/rest/v1/licenses',
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'apikey': SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY,
-      'Prefer': 'return=representation'
-    }
-  };
-
-  const supabaseReq = https.request(options, (supabaseRes) => {
-    let data = '';
-    supabaseRes.on('data', (chunk) => { data += chunk; });
-    supabaseRes.on('end', () => {
-      if (supabaseRes.statusCode >= 200 && supabaseRes.statusCode < 300) {
-        res.status(200).send('SUCESSO: Chave criada e salva no Supabase!');
-      } else {
-        res.status(500).send('Erro Supabase (' + supabaseRes.statusCode + '): ' + data);
-      }
-    });
-  });
-
-  supabaseReq.on('error', (err) => {
-    res.status(500).send('Erro de rede: ' + err.message);
-  });
-
-  supabaseReq.write(postData);
-  supabaseReq.end();
+  try {
+    const query = `
+      INSERT INTO licenses (key_name, duration_days, expires_at, created_at)
+      VALUES ($1, $2, $3, NOW())
+      ON CONFLICT (key_name) DO NOTHING;
+    `;
+    
+    await pool.query(query, [key, dias, expiresAt]);
+    res.status(200).send('SUCESSO: Chave criada e salva!');
+  } catch (err) {
+    console.error('Erro ao salvar no banco:', err.message);
+    res.status(500).send('Erro 500: ' + err.message);
+  }
 });
 
 // 2. Rota para verificar chaves (Painel do Cliente)
-app.get('/api/verify', (req, res) => {
+app.get('/api/verify', async (req, res) => {
   const { key } = req.query;
-  if (!key) return res.status(400).send('Erro: Chave em falta.');
 
-  const options = {
-    hostname: SUPABASE_HOST,
-    path: `/rest/v1/licenses?key_name=eq.${encodeURIComponent(key)}`,
-    method: 'GET',
-    headers: {
-      'apikey': SUPABASE_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_KEY
+  if (!key) {
+    return res.status(400).send('Erro: Chave em falta.');
+  }
+
+  try {
+    const result = await pool.query('SELECT * FROM licenses WHERE key_name = $1', [key]);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).send('Chave inválida ou não encontrada.');
     }
-  };
 
-  const supabaseReq = https.request(options, (supabaseRes) => {
-    let data = '';
-    supabaseRes.on('data', (chunk) => { data += chunk; });
-    supabaseRes.on('end', () => {
-      try {
-        if (supabaseRes.statusCode >= 200 && supabaseRes.statusCode < 300) {
-          const rows = JSON.parse(data);
-          if (!rows || rows.length === 0) {
-            return res.status(404).send('Chave inválida ou não encontrada.');
-          }
+    const license = result.rows[0];
+    const now = new Date();
+    const expiresAt = new Date(license.expires_at);
 
-          const license = rows[0];
-          const now = new Date();
-          const expiresAt = new Date(license.expires_at);
+    if (now > expiresAt) {
+      return res.status(400).send('Chave expirada.');
+    }
 
-          if (now > expiresAt) {
-            return res.status(400).send('Chave expirada.');
-          }
-
-          res.status(200).send('SUCESSO: Acesso liberado!');
-        } else {
-          res.status(500).send('Erro Supabase: ' + data);
-        }
-      } catch (e) {
-        res.status(500).send('Erro ao processar resposta.');
-      }
-    });
-  });
-
-  supabaseReq.on('error', (err) => {
-    res.status(500).send('Erro de rede: ' + err.message);
-  });
-
-  supabaseReq.end();
+    res.status(200).send('SUCESSO: Acesso liberado!');
+  } catch (err) {
+    console.error('Erro ao verificar chave:', err.message);
+    res.status(500).send('Erro 500: ' + err.message);
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API HTTPS a correr na porta ${PORT}`);
+  console.log(`API a correr na porta ${PORT}`);
 });
