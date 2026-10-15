@@ -11,9 +11,6 @@ const pool = new Pool({
 
 async function initDb() {
   try {
-    // Força a recriação da tabela de dispositivos para corrigir o conflito da restrição UNIQUE
-    await pool.query(`DROP TABLE IF EXISTS active_devices;`);
-
     await pool.query(`
       CREATE TABLE IF NOT EXISTS licenses (
         id SERIAL PRIMARY KEY,
@@ -31,14 +28,14 @@ async function initDb() {
         last_seen TIMESTAMP DEFAULT NOW()
       );
     `);
-    console.log("Base de dados limpa e inicializada com sucesso!");
+    console.log("Base de dados inicializada com sucesso!");
   } catch (err) {
     console.error("Erro ao inicializar a base de dados:", err.message);
   }
 }
 initDb();
 
-// 1. Apenas cria e guarda a chave (Painel ADM)
+// 1. Apenas cria a licença (ADM) - NENHUM DISPOSITIVO É REGISTADO AQUI
 app.get('/api/save', async (req, res) => {
   const { key, duration } = req.query;
   if (!key) return res.status(400).send('Erro: Chave em falta.');
@@ -60,7 +57,7 @@ app.get('/api/save', async (req, res) => {
   }
 });
 
-// 2. Verifica a chave e regista o dispositivo do cliente
+// 2. Regista o dispositivo APENAS quando o cliente usa a chave
 app.get('/api/verify', async (req, res) => {
   const { key, device } = req.query;
   if (!key) return res.status(400).send('Erro: Chave em falta.');
@@ -81,7 +78,7 @@ app.get('/api/verify', async (req, res) => {
       return res.status(400).send('Chave expirada.');
     }
 
-    // Regista ou atualiza o dispositivo associado a esta chave de forma segura
+    // Insere ou atualiza o dispositivo associado a esta chave
     await pool.query(
       `INSERT INTO active_devices (key_name, device_name, ip_address, last_seen)
        VALUES ($1, $2, $3, NOW())
@@ -96,10 +93,11 @@ app.get('/api/verify', async (req, res) => {
   }
 });
 
-// 3. Lista os dispositivos conectados para o Painel ADM
+// 3. Lista apenas dispositivos ativos (considera inativo se não atualizar há mais de 15 segundos)
 app.get('/api/devices', async (req, res) => {
   try {
-    await pool.query(`DELETE FROM active_devices WHERE last_seen < NOW() - INTERVAL '10 minutes';`);
+    // Remove quem não atualizou o sinal há mais de 15 segundos
+    await pool.query(`DELETE FROM active_devices WHERE last_seen < NOW() - INTERVAL '15 seconds';`);
     const result = await pool.query('SELECT key_name, device_name, ip_address, last_seen FROM active_devices ORDER BY last_seen DESC;');
     res.status(200).json(result.rows);
   } catch (err) {
@@ -111,4 +109,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`API a funcionar na porta ${PORT}`);
 });
-
