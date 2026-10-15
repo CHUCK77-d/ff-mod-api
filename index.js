@@ -1,23 +1,28 @@
-
 const express = require('express');
 const { Pool } = require('pg');
 
 const app = express();
 app.use(express.json());
 
+// Configuração robusta do Pool do Postgres para o Supabase
 const pool = new Pool({
   host: process.env.PGHOST || 'rpanwkvzsuhixnskidla.supabase.co',
   user: process.env.PGUSER || 'postgres',
   password: process.env.PGPASSWORD || '3K5QwKpS6RMM5ItP',
   database: process.env.PGDATABASE || 'postgres',
   port: process.env.PGPORT ? parseInt(process.env.PGPORT) : 5432,
-  ssl: { rejectUnauthorized: false }
+  ssl: {
+    rejectUnauthorized: false
+  }
 });
 
-// Rota para gerar chaves (Painel ADM)
+// 1. Rota para gerar e salvar chaves (Painel ADM)
 app.get('/api/save', async (req, res) => {
   const { key, duration } = req.query;
-  if (!key) return res.status(400).send('Erro: Chave em falta.');
+
+  if (!key) {
+    return res.status(400).send('Erro: Parâmetro "key" em falta.');
+  }
 
   const dias = duration ? parseInt(duration) : 7;
   const expiresAt = new Date();
@@ -29,17 +34,22 @@ app.get('/api/save', async (req, res) => {
       VALUES ($1, $2, $3, NOW())
       ON CONFLICT DO NOTHING;
     `;
+    
     await pool.query(query, [key, dias, expiresAt]);
-    res.status(200).send('SUCESSO: Chave criada e salva!');
+    res.status(200).send('SUCESSO: Chave criada e salva no Supabase!');
   } catch (err) {
+    console.error('Erro ao salvar no banco:', err.message);
     res.status(500).send('Erro 500: ' + err.message);
   }
 });
 
-// Rota para verificar chaves (Painel Cliente)
+// 2. Rota para verificar chaves (Painel do Cliente)
 app.get('/api/verify', async (req, res) => {
   const { key } = req.query;
-  if (!key) return res.status(400).send('Erro: Chave em falta.');
+
+  if (!key) {
+    return res.status(400).send('Erro: Chave em falta.');
+  }
 
   try {
     const result = await pool.query('SELECT * FROM licenses WHERE key_name = $1', [key]);
@@ -58,11 +68,12 @@ app.get('/api/verify', async (req, res) => {
 
     res.status(200).send('SUCESSO: Acesso liberado!');
   } catch (err) {
+    console.error('Erro ao verificar chave:', err.message);
     res.status(500).send('Erro 500: ' + err.message);
   }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`API a funcionar na porta ${PORT}`);
+  console.log(`API a correr na porta ${PORT}`);
 });
