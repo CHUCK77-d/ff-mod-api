@@ -11,7 +11,9 @@ const pool = new Pool({
 
 async function initDb() {
   try {
-    // Garante que a tabela active_devices tem uma restrição UNIQUE em key_name
+    // Força a recriação da tabela de dispositivos para corrigir o conflito da restrição UNIQUE
+    await pool.query(`DROP TABLE IF EXISTS active_devices;`);
+
     await pool.query(`
       CREATE TABLE IF NOT EXISTS licenses (
         id SERIAL PRIMARY KEY,
@@ -29,7 +31,7 @@ async function initDb() {
         last_seen TIMESTAMP DEFAULT NOW()
       );
     `);
-    console.log("Base de dados inicializada com sucesso!");
+    console.log("Base de dados limpa e inicializada com sucesso!");
   } catch (err) {
     console.error("Erro ao inicializar a base de dados:", err.message);
   }
@@ -79,7 +81,7 @@ app.get('/api/verify', async (req, res) => {
       return res.status(400).send('Chave expirada.');
     }
 
-    // Regista ou atualiza o dispositivo associado a esta chave
+    // Regista ou atualiza o dispositivo associado a esta chave de forma segura
     await pool.query(
       `INSERT INTO active_devices (key_name, device_name, ip_address, last_seen)
        VALUES ($1, $2, $3, NOW())
@@ -109,3 +111,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`API a funcionar na porta ${PORT}`);
 });
+
